@@ -4,7 +4,6 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"time"
 
 	"brevitas/backend/db"
 
@@ -14,7 +13,7 @@ import (
 	"github.com/pocketbase/pocketbase"
 	"github.com/pocketbase/pocketbase/apis"
 	"github.com/pocketbase/pocketbase/core"
-	"github.com/pocketbase/pocketbase/models"
+	"github.com/pocketbase/pocketbase/tools/cron"
 )
 
 func main() {
@@ -24,6 +23,13 @@ func main() {
 	app.OnBeforeServe().Add(func(e *core.ServeEvent) error {
 		// serves static files from the provided public dir (if exists)
 		e.Router.GET("/*", apis.StaticDirectoryHandler(os.DirFS("./pb_public"), false))
+		scheduler := cron.New()
+
+		//run every day at 00:00
+		scheduler.MustAdd("deleteOldPosts", "0 0 1-31 * *", func() {
+			db.DeleteOldPosts(app)
+			println("Old posts deleted")
+		})
 
 		e.Router.GET("/api/brevitas/feeds/:feedID", func(c echo.Context) error {
 			feed := db.Feed{}
@@ -46,7 +52,9 @@ func main() {
 
 		e.Router.GET("/api/brevitas/feeds/:feedID/posts", func(c echo.Context) error {
 			//check if the post list should be refreshed
-			feedRecord, err := app.Dao().FindRecordById("feeds", c.PathParam("feedID"))
+
+			//TODO: implement feed caching
+			/* feedRecord, err := app.Dao().FindRecordById("feeds", c.PathParam("feedID"))
 
 			if err != nil {
 				return c.JSON(http.StatusNotFound,
@@ -55,66 +63,18 @@ func main() {
 					}{Message: "Feed not found"})
 			}
 
-			feed := db.Feed{}
-			err = app.Dao().DB().
-				Select("name", "url").
-				From("feeds").
-				Where(dbx.NewExp("id = {:id}", dbx.Params{"id": c.PathParam("feedID")})).
-				One(&feed)
-
-			if err != nil {
-				return c.JSON(http.StatusNotFound,
-					struct {
-						Message string
-					}{Message: "Resource not found"})
-			}
-
-			//if its time to refresh the posts
-			if time.Now().Unix()-db.FeedCacheTime > feedRecord.Updated.Time().Unix() {
-				postCollection, err := app.Dao().FindCollectionByNameOrId("posts")
+			if int(time.Now().UTC().Sub(feedRecord.Updated.Time()).Seconds()) > db.FeedCacheTime {
+				err = db.RefreshFeed(app, c, parser, c.PathParam("feedID"))
 				if err != nil {
-					return c.JSON(http.StatusInternalServerError, "")
+					return err
 				}
+			} */
 
-				parsedFeed, err := parser.ParseURL(feed.Url)
-				if err != nil {
-					return c.JSON(http.StatusInternalServerError,
-						struct {
-							Message string
-						}{Message: "Could not parse posts"})
-				}
+			db.RefreshFeed(app, c, parser, c.PathParam("feedID"))
+			dbPosts, code := db.GetFeedPosts(app)
 
-				posts := make([]db.Post, len(parsedFeed.Items))
+			return c.JSON(code, dbPosts)
 
-				for i, item := range parsedFeed.Items {
-					posts[i] = *db.NewPostFromItem(item)
-					posts[i].Feed = c.PathParam("feedID")
-				}
-
-				for _, p := range db.FilterNewPosts(app, c.PathParam("feedID"), posts) {
-					record := models.NewRecord(postCollection)
-
-					record.Set("title", p.Title)
-					record.Set("description", p.Description)
-					record.Set("url", p.Url)
-					record.Set("published", p.Published)
-					record.Set("feed", p.Feed)
-
-					//app.Dao().SaveRecord(record)
-				}
-
-			}
-
-			dbPosts := []db.Post{}
-
-			app.Dao().
-				DB().
-				Select("title", "description", "url", "published").
-				From("posts").
-				Where(dbx.NewExp("feed = {:id}", dbx.Params{"id": c.PathParam("feedID")})).
-				All(dbPosts)
-
-			return c.JSON(200, dbPosts)
 		})
 
 		return nil
