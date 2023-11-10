@@ -87,6 +87,7 @@ func main() {
 
 			posts := []db.Post{}
 
+			//TODO: this only returns results from one publication for some reason
 			for _, feed := range feeds {
 				feedPosts := []db.Post{}
 
