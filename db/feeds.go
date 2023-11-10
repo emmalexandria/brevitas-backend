@@ -68,7 +68,7 @@ func RefreshFeed(app *pocketbase.PocketBase, c echo.Context, parser *gofeed.Pars
 	return nil
 }
 
-func GetFeedPosts(app *pocketbase.PocketBase) ([]Post, int) {
+func GetAllPosts(app *pocketbase.PocketBase) ([]Post, int) {
 	dbPosts := []Post{}
 
 	err := app.Dao().

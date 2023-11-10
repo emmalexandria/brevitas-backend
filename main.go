@@ -71,10 +71,46 @@ func main() {
 			} */
 
 			db.RefreshFeed(app, c, parser, c.PathParam("feedID"))
-			dbPosts, code := db.GetFeedPosts(app)
+			dbPosts, code := db.GetAllPosts(app)
 
 			return c.JSON(code, dbPosts)
 
+		})
+
+		e.Router.GET("api/brevitas/user/feed", func(c echo.Context) error {
+			record := apis.RequestInfo(c).AuthRecord
+			if record == nil {
+				return c.JSON(http.StatusNotFound, "Not Found")
+			}
+
+			feeds := record.Get("feeds").([]string)
+
+			posts := []db.Post{}
+
+			for _, feed := range feeds {
+				feedPosts := []db.Post{}
+
+				err := app.Dao().
+					DB().
+					Select("title", "description", "url", "feed", "published").
+					From("posts").
+					Where(dbx.NewExp("feed = {:feedID}", dbx.Params{"feedID": feed})).
+					Limit(-1).
+					All(&posts)
+
+				if err != nil {
+					return c.JSON(http.StatusInternalServerError, "Could not get user posts")
+				}
+
+				posts = append(posts, feedPosts...)
+			}
+
+			/* 	for _, feed := range feeds {
+				println(feed)
+				feedPosts := []db.Post{}
+
+			} */
+			return c.JSON(http.StatusOK, posts)
 		})
 
 		return nil
