@@ -1,6 +1,8 @@
 package main
 
 import (
+	"brevitas/backend/db"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
@@ -64,8 +66,6 @@ func main() {
 				feedRecord.Set("type", feed.FeedType)
 				feedRecord.Set("base_url", feed.Link)
 
-				fmt.Println(feed.Link)
-
 				if err := txDao.SaveRecord(feedRecord); err != nil {
 					return c.String(http.StatusInternalServerError, "Something went wrong saving the publication")
 				}
@@ -95,21 +95,47 @@ func main() {
 			return c.JSON(http.StatusOK, 200)
 		})
 
-		e.Router.GET("/api/brevitas/feeds/:feedURL", func(c echo.Context) error {
+		e.Router.GET("/api/brevitas/feeds/:feedID", func(c echo.Context) error {
+			feedID := c.PathParam("feedID")
+
+			feed, err := app.Dao().FindRecordById("feeds", feedID)
+			if err != nil {
+				return c.JSON(500, "Error fetching record")
+			}
+
+			parsedFeed, err := parser.ParseURL(feed.GetString("url"))
+			if err != nil {
+				return c.JSON(500, "Error parsing feed")
+			}
+
+			posts := parsedFeed.Items
+			var ret_posts []db.Post
+
+			for _, post := range posts {
+				var post = db.Post{
+					Title:       post.Title,
+					Description: post.Description,
+					Url:         post.Link,
+					Published:   post.Published,
+				}
+				ret_posts = append(ret_posts, post)
+			}
+
+			json, err := json.Marshal(ret_posts)
+			if err != nil {
+				return c.JSON(500, "Error marshalling response")
+			}
+
+			return c.JSON(http.StatusOK, string(json))
+		})
+
+		e.Router.GET("/api/brevitas/feed", func(c echo.Context) error {
 			authRecord := apis.RequestInfo(c).AuthRecord
 			if authRecord == nil {
 				return c.JSON(http.StatusNotFound, "")
 			}
 
-			feed, err := parser.ParseURL(c.PathParam("feedURL"))
-			if err != nil {
-				return c.JSON(http.StatusBadRequest, "Invalid url")
-			}
-			return c.JSON(http.StatusOK, map[string]any{"name": feed.Title, "description": feed.Description, "url": feed.FeedLink, "type": feed.FeedType, "image": feed.Image.URL})
-		})
-
-		e.Router.GET("/api/brevitas/feeds", func(c echo.Context) error {
-			return c.JSON(http.StatusOK, true)
+			return c.JSON(http.StatusOK, 200)
 		})
 
 		return nil

@@ -16,7 +16,7 @@ type Post struct {
 	Description string `db:"description" json:"description"`
 	Url         string `db:"url" json:"url"`
 	Published   string `db:"published" json:"published"`
-	Feed        string `db:"feed" json:"feed"`
+	Image       string `db:"image" json:"image"`
 }
 
 func NewPostFromItem(item *gofeed.Item) Post {
