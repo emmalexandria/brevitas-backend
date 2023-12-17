@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -45,7 +46,9 @@ func main() {
 
 			feed, err := parser.ParseURL(data.URL)
 			if err != nil {
-				return c.JSON(http.StatusBadRequest, "Invalid url")
+				fmt.Println(err)
+				return c.JSON(http.StatusBadRequest, err)
+
 			}
 
 			err = app.Dao().RunInTransaction(func(txDao *daos.Dao) error {
@@ -59,7 +62,9 @@ func main() {
 				feedRecord.Set("url", data.URL)
 				feedRecord.Set("description", feed.Description)
 				feedRecord.Set("type", feed.FeedType)
-				feedRecord.Set("base_url", feed.FeedLink)
+				feedRecord.Set("base_url", feed.Link)
+
+				fmt.Println(feed.Link)
 
 				if err := txDao.SaveRecord(feedRecord); err != nil {
 					return c.String(http.StatusInternalServerError, "Something went wrong saving the publication")
