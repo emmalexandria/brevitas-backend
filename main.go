@@ -5,15 +5,13 @@ import (
 	"net/http"
 	"os"
 
-	"brevitas/backend/db"
-
 	"github.com/labstack/echo/v5"
 	"github.com/mmcdole/gofeed"
-	"github.com/pocketbase/dbx"
 	"github.com/pocketbase/pocketbase"
 	"github.com/pocketbase/pocketbase/apis"
 	"github.com/pocketbase/pocketbase/core"
-	"github.com/pocketbase/pocketbase/tools/cron"
+	"github.com/pocketbase/pocketbase/daos"
+	"github.com/pocketbase/pocketbase/models"
 )
 
 func main() {
@@ -23,95 +21,90 @@ func main() {
 	app.OnBeforeServe().Add(func(e *core.ServeEvent) error {
 		// serves static files from the provided public dir (if exists)
 		e.Router.GET("/*", apis.StaticDirectoryHandler(os.DirFS("./pb_public"), false))
-		scheduler := cron.New()
-
-		//run every day at 00:00
-		scheduler.MustAdd("deleteOldPosts", "0 0 1-31 * *", func() {
-			db.DeleteOldPosts(app)
-			println("Old posts deleted")
-		})
 
 		e.Router.GET("/api/brevitas/feeds/:feedID", func(c echo.Context) error {
-			feed := db.Feed{}
 
-			err := app.Dao().DB().
-				Select("name", "url").
-				From("feeds").
-				Where(dbx.NewExp("id = {:id}", dbx.Params{"id": c.PathParam("feedID")})).
-				One(&feed)
-
-			if err != nil {
-				return c.JSON(http.StatusNotFound,
-					struct {
-						Message string
-					}{Message: "Resource not found"})
-			}
-
-			return c.JSON(http.StatusOK, feed)
+			return c.JSON(http.StatusOK, 200)
 		})
 
-		e.Router.GET("/api/brevitas/feeds/:feedID/posts", func(c echo.Context) error {
-			//check if the post list should be refreshed
-
-			//TODO: implement feed caching
-			/* feedRecord, err := app.Dao().FindRecordById("feeds", c.PathParam("feedID"))
-
-			if err != nil {
-				return c.JSON(http.StatusNotFound,
-					struct {
-						Message string
-					}{Message: "Feed not found"})
+		e.Router.POST("/api/brevitas/feeds", func(c echo.Context) error {
+			authRecord := apis.RequestInfo(c).AuthRecord
+			if authRecord == nil {
+				return c.JSON(http.StatusNotFound, "")
 			}
 
-			if int(time.Now().UTC().Sub(feedRecord.Updated.Time()).Seconds()) > db.FeedCacheTime {
-				err = db.RefreshFeed(app, c, parser, c.PathParam("feedID"))
+			data := struct {
+				Name        string `json:"name" form:"name"`
+				Publication string `json:"publication" form:"publication"`
+				URL         string `json:"url" form:"url"`
+			}{}
+
+			if err := c.Bind(&data); err != nil {
+				return apis.NewBadRequestError("Failed to read request data", err)
+			}
+
+			feed, err := parser.ParseURL(data.URL)
+			if err != nil {
+				return c.JSON(http.StatusBadRequest, "Invalid url")
+			}
+
+			err = app.Dao().RunInTransaction(func(txDao *daos.Dao) error {
+				feedCollection, err := txDao.FindCollectionByNameOrId("feeds")
+				if err != nil {
+					return c.String(http.StatusInternalServerError, "Something went wrong fetching feeds")
+				}
+
+				feedRecord := models.NewRecord(feedCollection)
+				feedRecord.Set("name", feed.Title)
+				feedRecord.Set("url", data.URL)
+				feedRecord.Set("description", feed.Description)
+				feedRecord.Set("type", feed.FeedType)
+				feedRecord.Set("base_url", feed.FeedLink)
+
+				if err := txDao.SaveRecord(feedRecord); err != nil {
+					return c.String(http.StatusInternalServerError, "Something went wrong saving the publication")
+				}
+
+				feedUserCollection, err := txDao.FindCollectionByNameOrId("user_feeds")
 				if err != nil {
 					return err
 				}
-			} */
 
-			db.RefreshFeed(app, c, parser, c.PathParam("feedID"))
-			dbPosts, code := db.GetAllPosts(app)
+				feedUserRecord := models.NewRecord(feedUserCollection)
+				feedUserRecord.Set("name", data.Name)
+				feedUserRecord.Set("publication", data.Publication)
+				feedUserRecord.Set("user", authRecord.Id)
+				feedUserRecord.Set("feed", feedRecord.Id)
 
-			return c.JSON(code, dbPosts)
-
-		})
-
-		e.Router.GET("api/brevitas/user/feed", func(c echo.Context) error {
-			record := apis.RequestInfo(c).AuthRecord
-			if record == nil {
-				return c.JSON(http.StatusNotFound, "Not Found")
-			}
-
-			feeds := record.Get("feeds").([]string)
-
-			posts := []db.Post{}
-
-			//TODO: this only returns results from one publication for some reason
-			for _, feed := range feeds {
-				feedPosts := []db.Post{}
-
-				err := app.Dao().
-					DB().
-					Select("title", "description", "url", "feed", "published").
-					From("posts").
-					Where(dbx.NewExp("feed = {:feedID}", dbx.Params{"feedID": feed})).
-					Limit(-1).
-					All(&posts)
-
-				if err != nil {
-					return c.JSON(http.StatusInternalServerError, "Could not get user posts")
+				if err := txDao.SaveRecord(feedUserRecord); err != nil {
+					return c.String(http.StatusInternalServerError, "Something went wrong subscribing you to the publication")
 				}
 
-				posts = append(posts, feedPosts...)
+				return nil
+			})
+
+			if err != nil {
+				return c.NoContent(http.StatusInternalServerError)
 			}
 
-			/* 	for _, feed := range feeds {
-				println(feed)
-				feedPosts := []db.Post{}
+			return c.JSON(http.StatusOK, 200)
+		})
 
-			} */
-			return c.JSON(http.StatusOK, posts)
+		e.Router.GET("/api/brevitas/feeds/:feedURL", func(c echo.Context) error {
+			authRecord := apis.RequestInfo(c).AuthRecord
+			if authRecord == nil {
+				return c.JSON(http.StatusNotFound, "")
+			}
+
+			feed, err := parser.ParseURL(c.PathParam("feedURL"))
+			if err != nil {
+				return c.JSON(http.StatusBadRequest, "Invalid url")
+			}
+			return c.JSON(http.StatusOK, map[string]any{"name": feed.Title, "description": feed.Description, "url": feed.FeedLink, "type": feed.FeedType, "image": feed.Image.URL})
+		})
+
+		e.Router.GET("/api/brevitas/feeds", func(c echo.Context) error {
+			return c.JSON(http.StatusOK, true)
 		})
 
 		return nil
