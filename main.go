@@ -25,12 +25,12 @@ func main() {
 		// serves static files from the provided public dir (if exists)
 		e.Router.GET("/*", apis.StaticDirectoryHandler(os.DirFS("./pb_public"), false))
 
-		e.Router.GET("/api/brevitas/feeds/:feedID", func(c echo.Context) error {
+		e.Router.GET("/api/brevitas/sources/:sourceIDID", func(c echo.Context) error {
 
 			return c.JSON(http.StatusOK, 200)
 		})
 
-		e.Router.POST("/api/brevitas/feeds", func(c echo.Context) error {
+		e.Router.POST("/api/brevitas/sources", func(c echo.Context) error {
 			authRecord := apis.RequestInfo(c).AuthRecord
 			if authRecord == nil {
 				return c.JSON(http.StatusNotFound, "")
@@ -54,34 +54,34 @@ func main() {
 			}
 
 			err = app.Dao().RunInTransaction(func(txDao *daos.Dao) error {
-				feedCollection, err := txDao.FindCollectionByNameOrId("feeds")
+				sourceCollection, err := txDao.FindCollectionByNameOrId("sources")
 				if err != nil {
 					return c.String(http.StatusInternalServerError, "Something went wrong fetching feeds")
 				}
 
-				feedRecord := models.NewRecord(feedCollection)
-				feedRecord.Set("name", feed.Title)
-				feedRecord.Set("url", data.URL)
-				feedRecord.Set("description", feed.Description)
-				feedRecord.Set("type", feed.FeedType)
-				feedRecord.Set("base_url", feed.Link)
+				sourceRecord := models.NewRecord(sourceCollection)
+				sourceRecord.Set("name", feed.Title)
+				sourceRecord.Set("url", data.URL)
+				sourceRecord.Set("description", feed.Description)
+				sourceRecord.Set("type", feed.FeedType)
+				sourceRecord.Set("base_url", feed.Link)
 
-				if err := txDao.SaveRecord(feedRecord); err != nil {
+				if err := txDao.SaveRecord(sourceRecord); err != nil {
 					return c.String(http.StatusInternalServerError, "Something went wrong saving the publication")
 				}
 
-				feedUserCollection, err := txDao.FindCollectionByNameOrId("user_feeds")
+				userSourceCollection, err := txDao.FindCollectionByNameOrId("user_sources")
 				if err != nil {
 					return err
 				}
 
-				feedUserRecord := models.NewRecord(feedUserCollection)
-				feedUserRecord.Set("name", data.Name)
-				feedUserRecord.Set("publication", data.Publication)
-				feedUserRecord.Set("user", authRecord.Id)
-				feedUserRecord.Set("feed", feedRecord.Id)
+				userSourceRecord := models.NewRecord(userSourceCollection)
+				userSourceRecord.Set("name", data.Name)
+				userSourceRecord.Set("publication", data.Publication)
+				userSourceRecord.Set("user", authRecord.Id)
+				userSourceRecord.Set("feed", sourceRecord.Id)
 
-				if err := txDao.SaveRecord(feedUserRecord); err != nil {
+				if err := txDao.SaveRecord(userSourceRecord); err != nil {
 					return c.String(http.StatusInternalServerError, "Something went wrong subscribing you to the publication")
 				}
 
@@ -95,20 +95,20 @@ func main() {
 			return c.JSON(http.StatusOK, 200)
 		})
 
-		e.Router.GET("/api/brevitas/feeds/:feedID", func(c echo.Context) error {
-			feedID := c.PathParam("feedID")
+		e.Router.GET("/api/brevitas/sources/:sourceID", func(c echo.Context) error {
+			sourceID := c.PathParam("sourceID")
 
-			feed, err := app.Dao().FindRecordById("feeds", feedID)
+			source, err := app.Dao().FindRecordById("sources", sourceID)
 			if err != nil {
 				return c.JSON(500, "Error fetching record")
 			}
 
-			parsedFeed, err := parser.ParseURL(feed.GetString("url"))
+			parsedSource, err := parser.ParseURL(source.GetString("url"))
 			if err != nil {
 				return c.JSON(500, "Error parsing feed")
 			}
 
-			posts := parsedFeed.Items
+			posts := parsedSource.Items
 			var ret_posts []db.Post
 
 			for _, post := range posts {
