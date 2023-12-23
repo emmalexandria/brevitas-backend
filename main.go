@@ -2,7 +2,6 @@ package main
 
 import (
 	"brevitas/backend/db"
-	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
@@ -15,7 +14,11 @@ import (
 	"github.com/pocketbase/pocketbase/apis"
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/pocketbase/pocketbase/daos"
+	"github.com/pocketbase/pocketbase/models"
 )
+
+// constant to use when determing when to parse a source
+const SOURCE_PARSE_DELAY = 3600
 
 func main() {
 	app := pocketbase.New()
@@ -24,24 +27,6 @@ func main() {
 	app.OnBeforeServe().Add(func(e *core.ServeEvent) error {
 		// serves static files from the provided public dir (if exists)
 		e.Router.GET("/*", apis.StaticDirectoryHandler(os.DirFS("./pb_public"), false))
-
-		e.Router.GET("/api/brevitas/sources/:sourceID/posts", func(c echo.Context) error {
-			sourceID := c.PathParam("sourceID")
-
-			source, err := app.Dao().FindRecordById("sources", sourceID)
-			if err != nil {
-				return err
-			}
-
-			db.ParseSourceIntoPosts(source.GetString("url"), app.Dao(), parser)
-
-			posts, err := app.Dao().FindRecordsByFilter("posts", "source={:sourceID}", "", 0, 0, dbx.Params{"sourceID": sourceID})
-			if err != nil {
-				return err
-			}
-
-			return c.JSON(http.StatusOK, posts)
-		})
 
 		e.Router.POST("/api/brevitas/sources", func(c echo.Context) error {
 			authRecord := apis.RequestInfo(c).AuthRecord
@@ -97,40 +82,6 @@ func main() {
 			return c.JSON(http.StatusOK, 200)
 		})
 
-		e.Router.GET("/api/brevitas/sources/:sourceID", func(c echo.Context) error {
-			sourceID := c.PathParam("sourceID")
-
-			source, err := app.Dao().FindRecordById("sources", sourceID)
-			if err != nil {
-				return c.JSON(500, "Error fetching record")
-			}
-
-			parsedSource, err := parser.ParseURL(source.GetString("url"))
-			if err != nil {
-				return c.JSON(500, "Error parsing feed")
-			}
-
-			posts := parsedSource.Items
-			var ret_posts []db.Post
-
-			for _, post := range posts {
-				var post = db.Post{
-					Title:       post.Title,
-					Description: post.Description,
-					Url:         post.Link,
-					Published:   post.Published,
-				}
-				ret_posts = append(ret_posts, post)
-			}
-
-			json, err := json.Marshal(ret_posts)
-			if err != nil {
-				return c.JSON(500, "Error marshalling response")
-			}
-
-			return c.JSON(http.StatusOK, string(json))
-		})
-
 		e.Router.PATCH("/api/brevitas/user_sources/:userSourceID", func(c echo.Context) error {
 			authRecord := apis.RequestInfo(c).AuthRecord
 			if authRecord == nil {
@@ -177,6 +128,73 @@ func main() {
 			app.Dao().DeleteRecord(record)
 
 			return c.NoContent(http.StatusOK)
+		})
+
+		e.Router.GET("/api/brevitas/feed", func(c echo.Context) error {
+			authRecord := apis.RequestInfo(c).AuthRecord
+			if authRecord == nil {
+				return c.NoContent(http.StatusNotFound)
+			}
+			userID := authRecord.Id
+
+			//step 1: retrieve user_sources records
+			userSources, err := app.Dao().FindRecordsByFilter("user_sources", "user.id={:userID}", "", 0, 0, dbx.Params{"userID": userID})
+
+			var sources []*models.Record = make([]*models.Record, 0)
+			for _, userSource := range userSources {
+				sourceID := userSource.GetString("source")
+				source, err := app.Dao().FindRecordById("sources", sourceID)
+
+				if err != nil {
+					return err
+				}
+
+				sources = append(sources, source)
+				err = db.ParseSourceIfNeeded(source, app.Dao(), parser, SOURCE_PARSE_DELAY)
+				if err != nil {
+					return c.JSON(http.StatusInternalServerError, err.Error())
+				}
+			}
+
+			var posts []db.Post
+			for _, source := range sources {
+				postRecords, err := app.Dao().FindRecordsByFilter("posts", "source={:sourceID}", "", 0, 0, dbx.Params{"sourceID": source.Id})
+				if err != nil {
+					return err
+				}
+				var sourcePosts []db.Post
+
+				for _, postRecord := range postRecords {
+					userSource, err := app.Dao().FindFirstRecordByFilter("user_sources", "source={:sourceID}", dbx.Params{"sourceID": source.Id})
+					if err != nil {
+						return err
+					}
+
+					combSource := db.CombSource{
+						Name:        userSource.GetString("name"),
+						Publication: userSource.GetString("publication"),
+						BaseUrl:     source.GetString("base_url"),
+					}
+					post := db.Post{
+						Title:       postRecord.GetString("title"),
+						Description: postRecord.GetString("description"),
+						Url:         postRecord.GetString("url"),
+						Published:   postRecord.GetDateTime("published"),
+						Image:       postRecord.GetString("image"),
+						Source:      combSource,
+					}
+
+					sourcePosts = append(sourcePosts, post)
+				}
+
+				posts = append(posts, sourcePosts...)
+
+			}
+			if err != nil {
+				return err
+			}
+
+			return c.JSON(http.StatusOK, posts)
 		})
 
 		return nil

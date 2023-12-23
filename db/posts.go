@@ -9,6 +9,9 @@ import (
 
 func ParseSourceIntoPosts(sourceURL string, dao *daos.Dao, parser *gofeed.Parser) error {
 	dbSource, err := dao.FindFirstRecordByFilter("sources", "url={:sourceURL}", dbx.Params{"sourceURL": sourceURL})
+	if err != nil {
+		return err
+	}
 	postCollection, err := dao.FindCollectionByNameOrId("posts")
 	if err != nil {
 		return err
@@ -20,6 +23,9 @@ func ParseSourceIntoPosts(sourceURL string, dao *daos.Dao, parser *gofeed.Parser
 	}
 
 	for _, item := range source.Items {
+		if PostExists(dao, item.Link) {
+			continue
+		}
 		record := models.NewRecord(postCollection)
 
 		record.Set("title", item.Title)
@@ -37,6 +43,19 @@ func ParseSourceIntoPosts(sourceURL string, dao *daos.Dao, parser *gofeed.Parser
 			return err
 		}
 	}
+
 	return nil
+}
+
+func PostExists(dao *daos.Dao, postURL string) bool {
+	record, _ := dao.FindFirstRecordByFilter("posts", "url={:url}", dbx.Params{"url": postURL})
+
+	if record != nil {
+		return true
+	}
+	return false
+}
+
+func RatePosts() {
 
 }

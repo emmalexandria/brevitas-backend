@@ -1,6 +1,9 @@
 package db
 
 import (
+	"time"
+
+	"github.com/mmcdole/gofeed"
 	"github.com/pocketbase/pocketbase/daos"
 	"github.com/pocketbase/pocketbase/models"
 )
@@ -44,5 +47,20 @@ func CreateUserSourceRecord(dao *daos.Dao, userSource UserSource, userID string,
 		return err
 	}
 
+	return nil
+}
+
+func ParseSourceIfNeeded(source *models.Record, dao *daos.Dao, parser *gofeed.Parser, parseDelay int) error {
+	lastParsed := source.GetDateTime("last_parsed")
+	if lastParsed.IsZero() || lastParsed.Time().Add(time.Duration(parseDelay*int(time.Second))).Before(time.Now().UTC()) {
+		err := ParseSourceIntoPosts(source.GetString("url"), dao, parser)
+		if err != nil {
+			return err
+		}
+		source.Set("last_parsed", time.Now().UTC())
+		dao.SaveRecord(source)
+	} else {
+		return nil
+	}
 	return nil
 }
