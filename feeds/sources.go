@@ -1,6 +1,7 @@
-package db
+package feeds
 
 import (
+	"brevitas/db"
 	"time"
 
 	"github.com/mmcdole/gofeed"
@@ -8,7 +9,7 @@ import (
 	"github.com/pocketbase/pocketbase/models"
 )
 
-func CreateSourceRecord(dao *daos.Dao, source Source) (*models.Record, error) {
+func CreateSourceRecord(dao *daos.Dao, source db.Source) (*models.Record, error) {
 	sourceCollection, err := dao.FindCollectionByNameOrId("sources")
 	if err != nil {
 		return nil, err
@@ -29,7 +30,7 @@ func CreateSourceRecord(dao *daos.Dao, source Source) (*models.Record, error) {
 	return record, nil
 }
 
-func CreateUserSourceRecord(dao *daos.Dao, userSource UserSource, userID string, sourceID string) error {
+func CreateUserSourceRecord(dao *daos.Dao, userSource db.UserSource, userID string, sourceID string) error {
 	collection, err := dao.FindCollectionByNameOrId("user_sources")
 	if err != nil {
 		return err

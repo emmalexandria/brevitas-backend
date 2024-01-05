@@ -1,4 +1,4 @@
-package db
+package feeds
 
 import "github.com/pocketbase/pocketbase/daos"
 

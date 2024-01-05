@@ -24,10 +24,23 @@ type CombSource struct {
 }
 
 type Post struct {
+	Id          string         `db:"id" json:"id"`
 	Title       string         `db:"title" json:"title"`
 	Description string         `db:"description" json:"description"`
 	Url         string         `db:"url" json:"url"`
 	Published   types.DateTime `db:"published" json:"published"`
 	Image       string         `db:"image" json:"image"`
 	Source      CombSource     `db:"source" json:"source"`
+}
+
+type Interest struct {
+	Id          string
+	Description string
+	User        string
+}
+
+type PostRating struct {
+	Interest Interest
+	Post     Post
+	Rating   int
 }

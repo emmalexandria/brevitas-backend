@@ -1,4 +1,4 @@
-module brevitas/backend
+module brevitas
 
 go 1.21.3
 

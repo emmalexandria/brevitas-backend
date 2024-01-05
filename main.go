@@ -1,11 +1,14 @@
 package main
 
 import (
-	"brevitas/backend/db"
+	"brevitas/db"
+	"brevitas/feeds"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
+	"strconv"
+	"time"
 
 	"github.com/labstack/echo/v5"
 	"github.com/mmcdole/gofeed"
@@ -63,10 +66,10 @@ func main() {
 						Type:        feed.FeedType,
 					}
 
-					sourceRecord, err = db.CreateSourceRecord(txDao, source)
+					sourceRecord, err = feeds.CreateSourceRecord(txDao, source)
 				}
 
-				err = db.CreateUserSourceRecord(txDao, db.UserSource{Name: data.Name, Publication: data.Publication}, authRecord.Id, sourceRecord.Id)
+				err = feeds.CreateUserSourceRecord(txDao, db.UserSource{Name: data.Name, Publication: data.Publication}, authRecord.Id, sourceRecord.Id)
 
 				if err != nil {
 					return c.String(http.StatusInternalServerError, "Something went wrong subscribing you to the publication")
@@ -130,12 +133,17 @@ func main() {
 			return c.NoContent(http.StatusOK)
 		})
 
-		e.Router.GET("/api/brevitas/feed", func(c echo.Context) error {
+		e.Router.GET("/api/brevitas/feed/:feedTime", func(c echo.Context) error {
 			authRecord := apis.RequestInfo(c).AuthRecord
 			if authRecord == nil {
 				return c.NoContent(http.StatusNotFound)
 			}
 			userID := authRecord.Id
+
+			feedTime, err := strconv.Atoi(c.PathParam("feedTime"))
+			if err != nil || feedTime > 86400 {
+				return c.JSON(http.StatusBadRequest, "Request must append a number less than 86400")
+			}
 
 			//step 1: retrieve user_sources records
 			userSources, err := app.Dao().FindRecordsByFilter("user_sources", "user.id={:userID}", "", 0, 0, dbx.Params{"userID": userID})
@@ -150,7 +158,7 @@ func main() {
 				}
 
 				sources = append(sources, source)
-				err = db.ParseSourceIfNeeded(source, app.Dao(), parser, SOURCE_PARSE_DELAY)
+				err = feeds.ParseSourceIfNeeded(source, app.Dao(), parser, SOURCE_PARSE_DELAY)
 				if err != nil {
 					return c.JSON(http.StatusInternalServerError, err.Error())
 				}
@@ -158,17 +166,31 @@ func main() {
 
 			var posts []db.Post
 			for _, source := range sources {
-				postRecords, err := app.Dao().FindRecordsByFilter("posts", "source={:sourceID}", "", 0, 0, dbx.Params{"sourceID": source.Id})
-				if err != nil {
-					return err
-				}
-				var sourcePosts []db.Post
-
-				for _, postRecord := range postRecords {
-					userSource, err := app.Dao().FindFirstRecordByFilter("user_sources", "source={:sourceID}", dbx.Params{"sourceID": source.Id})
+				var postRecords []*models.Record
+				if feedTime > 0 {
+					startTime, err := time.Now().Add(time.Duration(-feedTime) * time.Second).UTC().MarshalText()
 					if err != nil {
 						return err
 					}
+					postRecords, err = app.Dao().FindRecordsByFilter("posts", "source={:sourceID} && published>={:startDate}", "-published", 0, 0, dbx.Params{"sourceID": source.Id, "startDate": startTime})
+					if err != nil {
+						return err
+					}
+				} else {
+					postRecords, err = app.Dao().FindRecordsByFilter("posts", "source={:sourceID}", "-published", 0, 0, dbx.Params{"sourceID": source.Id})
+				}
+
+				if err != nil {
+					return err
+				}
+				userSource, err := app.Dao().FindFirstRecordByFilter("user_sources", "source={:sourceID}", dbx.Params{"sourceID": source.Id})
+				if err != nil {
+					return err
+				}
+
+				var sourcePosts []db.Post
+
+				for _, postRecord := range postRecords {
 
 					combSource := db.CombSource{
 						Name:        userSource.GetString("name"),
@@ -176,6 +198,7 @@ func main() {
 						BaseUrl:     source.GetString("base_url"),
 					}
 					post := db.Post{
+						Id:          postRecord.Id,
 						Title:       postRecord.GetString("title"),
 						Description: postRecord.GetString("description"),
 						Url:         postRecord.GetString("url"),
@@ -193,6 +216,9 @@ func main() {
 			if err != nil {
 				return err
 			}
+
+			interests, err := app.Dao().FindRecordsByFilter("interests", "user={:userID}", "", 0, 0, dbx.Params{"userID": userID})
+			feeds.CreatePostRatings(posts, interests, app.Dao())
 
 			return c.JSON(http.StatusOK, posts)
 		})

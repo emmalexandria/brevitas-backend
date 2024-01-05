@@ -1,6 +1,8 @@
-package db
+package feeds
 
 import (
+	"brevitas/ai"
+
 	"github.com/mmcdole/gofeed"
 	"github.com/pocketbase/dbx"
 	"github.com/pocketbase/pocketbase/daos"
@@ -56,6 +58,21 @@ func PostExists(dao *daos.Dao, postURL string) bool {
 	return false
 }
 
-func RatePosts() {
+func CreatePostRatings(posts []*models.Record, interests []*models.Record, dao *daos.Dao) error {
+	ratings := ai.GetPostRatings(posts, interests)
 
+	for _, rating := range ratings {
+		collection, err := dao.FindCollectionByNameOrId("articles")
+		if err != nil {
+			return err
+		}
+
+		record := models.NewRecord(collection)
+
+		record.Set("post", rating.Post.Id)
+		record.Set("interest", rating.Interest.Id)
+		record.Set("rating", rating.Rating)
+	}
+
+	return nil
 }
